@@ -24,7 +24,13 @@ menu db 13,10
 
 msgError db 13,10,'[ERROR] Entrada invalida',13,10,'$'
 
-msgNumero db 13,10,'Ingrese numero: $'
+msgCuenta db 13,10,'Ingrese numero de cuenta: $'
+msgMonto db 13,10,'Ingrese monto: $'
+msgSaldo db 13,10,'Ingrese saldo inicial: $'
+msgCuentaConsulta db 13,10,'Ingrese numero de cuenta a consultar: $'
+msgCuentaCreada db 13,10,'Cuenta creada correctamente',13,10,'$'
+msgDepositoOK db 13,10,'Deposito realizado correctamente',13,10,'$'
+msgRetiroOK db 13,10,'Retiro realizado correctamente',13,10,'$'
 
 ; buffer para lectura
 buffer db 10
@@ -42,9 +48,11 @@ cuentaNumero dw MAX_CUENTAS dup(0)
 
 cuentaNombre db MAX_CUENTAS*20 dup(0)
 
-cuentaSaldo dd MAX_CUENTAS dup(0)
+cuentaSaldo dw MAX_CUENTAS dup(0)
 
-cuentaEstado db MAX_CUENTAS dup(0)
+cuentaEstado db MAX_CUENTAS dup(0) 
+
+totalCuentas dw 0
 
 
 ; programa principal
@@ -148,9 +156,6 @@ PrintString endp
 
 ReadNumber proc
 
-mov dx,offset msgNumero
-call PrintString
-
 mov dx,offset buffer
 mov ah,0Ah
 int 21h
@@ -170,7 +175,7 @@ AsciiToInt proc
 xor ax,ax
 xor bx,bx
 
-mov si,offset texto
+mov si,offset buffer+2
 
 convert_loop:
 
@@ -256,23 +261,212 @@ ret
 MostrarError endp
 
 
-; otras
+BuscarCuenta proc
+
+mov cx,totalCuentas
+cmp cx,0
+je no_encontrada
+
+mov bx,0
+
+buscar_loop:
+
+cmp cuentaNumero[bx],ax
+je encontrada
+
+add bx,2
+loop buscar_loop
+
+no_encontrada:
+mov ax,-1
+ret
+
+encontrada:
+mov ax,bx
+ret
+
+BuscarCuenta endp 
+
 
 CrearCuenta proc
-; ...
+
+; verificar si ya hay 10 cuentas
+
+mov ax,totalCuentas
+cmp ax,MAX_CUENTAS
+je max_cuentas
+
+; pedir numero de cuenta
+
+mov dx,offset msgCuenta
+call PrintString
+call ReadNumber
+mov bx,ax
+
+; verificar que no exista
+
+mov ax,bx
+call BuscarCuenta
+
+cmp ax,-1
+jne cuenta_repetida
+
+; guardar numero de cuenta
+
+mov ax,totalCuentas
+mov dx,2
+mul dx
+
+mov si,ax
+
+mov ax,bx
+mov cuentaNumero[si],ax
+
+; pedir saldo inicial
+
+mov dx,offset msgSaldo
+call PrintString
+call ReadNumber
+call ValidarNumero
+
+mov dx,ax
+
+mov ax,totalCuentas
+mov bx,2
+mul bx
+
+mov si,ax
+mov cuentaSaldo[si],dx
+
+; activar cuenta
+
+mov bx,totalCuentas
+mov cuentaEstado[bx],1
+
+inc totalCuentas  
+mov dx,offset msgCuentaCreada
+call PrintString
+
 ret
+
+cuenta_repetida:
+call MostrarError
+ret
+
+max_cuentas:
+call MostrarError
+ret
+
 CrearCuenta endp
 
 
 Depositar proc
-; ...
+
+; pedir numero de cuenta
+
+mov dx,offset msgCuenta
+call PrintString
+call ReadNumber
+mov bx,ax
+
+mov ax,bx
+call BuscarCuenta
+
+cmp ax,-1
+je errorDeposito
+
+mov si,ax
+
+; verificar estado
+
+mov bx,si
+shr bx,1
+mov al,cuentaEstado[bx]
+
+cmp al,1
+jne errorDeposito
+
+; pedir monto
+
+mov dx,offset msgMonto
+call PrintString
+call ReadNumber
+call ValidarNumero
+
+mov dx,ax
+
+mov ax,si
+mov bx,2
+mul bx
+mov di,ax
+
+mov ax,cuentaSaldo[di]
+add ax,dx
+mov cuentaSaldo[di],ax
+
+mov dx,offset msgDepositoOK
+call PrintString
+
 ret
+
+errorDeposito:
+call MostrarError
+ret
+
 Depositar endp
 
 
 Retirar proc
-; ...
+
+mov dx,offset msgCuenta
+call PrintString
+call ReadNumber
+mov bx,ax
+
+mov ax,bx
+call BuscarCuenta
+
+cmp ax,-1
+je errorRetiro
+
+mov si,ax
+
+mov bx,si
+shr bx,1
+mov al,cuentaEstado[bx]
+
+cmp al,1
+jne errorRetiro
+
+mov dx,offset msgMonto
+call PrintString
+call ReadNumber
+call ValidarNumero
+
+mov dx,ax
+
+mov ax,si
+mov bx,2
+mul bx
+mov di,ax
+
+mov ax,cuentaSaldo[di]
+
+cmp ax,dx
+jl errorRetiro
+
+sub ax,dx
+mov cuentaSaldo[di],ax
+
+mov dx,offset msgRetiroOK
+call PrintString
+
 ret
+
+errorRetiro:
+call MostrarError
+ret
+
 Retirar endp
 
 
