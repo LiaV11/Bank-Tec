@@ -22,7 +22,7 @@ menu db 13,10
      db '----------------------------------',13,10
      db '$'
 
-;mensajes de error
+; mensajes de error
 msgError db 13,10,'[ERROR] Entrada invalida',13,10,'$'
 msgNoCuenta db 13,10, '[ERROR] Cuenta no existe',13,10,'$'
 msgNoFondos db 13,10, '[ERROR] Fondos insuficientes',13,10,'$'
@@ -31,7 +31,7 @@ msgYaInactiva db 13,10, '[ERROR] Cuenta ya inactiva',13,10,'$'
 msgCuentaExist db 13,10, '[ERROR] Cuenta ya existe',13,10,'$'
 msgErrorMax db 13,10, '[ERROR] Maximo de cuentas alcanzado',13,10,'$'
 
-;mensajes interacciones
+; mensajes interacciones
 msgCuenta db 13,10,'Ingrese numero de cuenta: $'
 msgMonto db 13,10,'Ingrese monto: $'
 msgSaldo db 13,10,'Ingrese saldo inicial: $'
@@ -205,18 +205,32 @@ ReadNumber endp
 AsciiToInt proc
 
     push si         
-    push bx          
+    push bx  
+    
+    ; limpiar flag de entrada invalida
+    mov byte ptr entradaInvalida,0        
 
     xor ax,ax
     xor bh,bh        ; limpiar BH antes del loop
     mov cl,buffer+1
-    mov si,offset buffer+2
+    mov si,offset buffer+2   
+    
+    ; verificar que haya al menos un caracter
+    cmp cl,0
+    je entrada_vacia
 
 convert_loop:
     cmp cl,0
     je fin_convert
 
-    mov bl,[si]
+    mov bl,[si] 
+    
+    ; validar que sea digito entre '0' y '9'
+    cmp bl,'0'
+    jb caracter_invalido
+    cmp bl,'9'
+    ja caracter_invalido
+    
     sub bl,30h       
 
     push bx          
@@ -229,7 +243,13 @@ convert_loop:
     inc si
     dec cl
     jmp convert_loop
-
+  
+caracter_invalido:
+entrada_vacia:
+    mov byte ptr entradaInvalida,1
+    xor ax,ax
+  
+  
 fin_convert:
 
     pop bx
@@ -273,18 +293,47 @@ IntToAscii endp
 
 
 
+; validacion para saldo inicial
 ValidarNumero proc
 
-cmp ax,0
-jl invalido
+    ; primero verifica si la entrada tuvo caracteres invalidos
+    cmp byte ptr entradaInvalida,1
+    je validar_error
 
-ret
+    ; saldo debe ser >= 0
+    ; solo falla si la entrada fue invalida
+    ret
 
-invalido:
-call MostrarError
-ret
+validar_error:
+    call MostrarError
+    mov byte ptr entradaInvalida,0    ; limpiar flag
+    stc                               ; carry flag = hubo error
+    ret
 
-ValidarNumero endp
+ValidarNumero endp    
+
+
+; valida montos de deposito y retiro
+ValidarMonto proc
+
+    ; verificar entrada invalida
+    cmp byte ptr entradaInvalida,1
+    je monto_error
+
+    ; verificar que sea mayor a 0
+    cmp ax,0
+    je monto_error
+
+    clc                               ; carry flag = sin error
+    ret
+
+monto_error:
+    call MostrarError
+    mov byte ptr entradaInvalida,0
+    stc                               ; carry flag = hubo error
+    ret
+
+ValidarMonto endp
 
 
 ; error entrada invalida
@@ -440,6 +489,10 @@ CrearCuenta proc
     call PrintString
     ret
 
+saldo_invalido:
+    pop di                  
+    ret
+
 cuenta_repetida:
     call MostrarErrorCuentaEx
     ret
@@ -469,14 +522,15 @@ Depositar proc
     shr bx,1
     mov al,cuentaEstado[bx]
     cmp al,1
-    jne errorDeposito
+    jne errorDepositoInactiva
 
     mov dx,offset msgMonto
     call PrintString
 
     push si              ; guardar offset antes de ReadNumber
     call ReadNumber
-    call ValidarNumero
+    call ValidarMonto  
+    jc monto_deposito_invalido
     pop si               ; restaurar offset correcto
 
     mov cx,ax
@@ -489,8 +543,16 @@ Depositar proc
     call PrintString
     ret
 
+monto_deposito_invalido:
+    pop si
+    ret
+
+errorDepositoInactiva:
+    call MostrarErrorInactiva
+    ret
+
 errorDeposito:
-    call MostrarError
+    call MostrarErrorCuenta
     ret
 
 Depositar endp
@@ -514,21 +576,22 @@ Retirar proc
     shr bx,1
     mov al,cuentaEstado[bx]
     cmp al,1
-    jne errorRetiro
+    jne errorRetiroInactiva
 
     mov dx,offset msgMonto
     call PrintString
 
     push si              ; guardar offset antes de ReadNumber
     call ReadNumber
-    call ValidarNumero
+    call ValidarMonto
+    jc monto_retiro_invalido
     pop si               ; restaurar offset correcto
 
     mov cx,ax
 
     mov ax,cuentaSaldo[si]
     cmp ax,cx
-    jb errorRetiro
+    jb errorFondos
 
     sub ax,cx
     mov cuentaSaldo[si],ax
@@ -537,26 +600,38 @@ Retirar proc
     call PrintString
     ret
 
-errorRetiro:
+monto_retiro_invalido:
+    pop si
+    ret
+
+errorFondos:
     call MostrarErrorFondos
+    ret
+
+errorRetiroInactiva:
+    call MostrarErrorInactiva
+    ret
+
+errorRetiro:
+    call MostrarErrorCuenta
     ret
 
 Retirar endp
 
-
+; busca cuenta por num e imprime el saldo en pantalla
 ConsultarSaldo proc
-
+    ; recibe numero de cuenta
     mov dx,offset msgCuentaConsulta
     call PrintString
     call ReadNumber
     mov bx,ax
-
+    ; busca la cuenta
     mov ax,bx
     call BuscarCuenta
-
+    ; si no existe
     cmp ax,-1
     je errorConsulta
-
+    ; acomoda el offset en la posicion del saldo
     mov si,ax
 
     
@@ -575,7 +650,7 @@ errorConsulta:
 
 ConsultarSaldo endp
 
-
+; imprime en pantalla reporte completo(cuentas activas, inactivas, mayor y menor saldo)
 ReporteGeneral proc
 
     ; verificar que haya cuentas
@@ -598,8 +673,8 @@ ReporteGeneral proc
 
     ; recorrer todas las cuentas
     mov cx,totalCuentas
-    mov bx,0             ; bx = indice (para cuentaEstado)
-    mov si,0             ; si = offset word (bx*2, para cuentaSaldo/cuentaNumero)
+    mov bx,0            
+    mov si,0            
 
 reporte_loop:
 
@@ -620,7 +695,7 @@ es_activa:
 
     ; comparar con mayor
     mov di,idxMayor
-    shl di,1             ; di = idxMayor * 2
+    shl di,1             
     mov ax,cuentaSaldo[si]
     cmp ax,cuentaSaldo[di]
     jbe no_es_mayor
@@ -674,7 +749,7 @@ siguiente_cuenta:
     mov ax,cuentaSaldo[si]
     call IntToAscii
 
-    ; imprimir cuenta con menor saldo
+    ; imprimir menor saldo
     mov dx,offset msgMenorSaldo
     call PrintString
     mov si,idxMenor
@@ -740,7 +815,7 @@ mov dx,offset msgCuentaDesactivada
 call PrintString
 
 ret
-
+; posibles errores
 errorCuentaNoEx:
 call MostrarErrorCuenta
 ret
